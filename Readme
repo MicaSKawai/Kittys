@@ -1,0 +1,140 @@
+# 🏪 Almacén Bot — GTA RP Hub
+
+Bot de Discord profesional para gestionar tu almacén: ventas, gastos, stock y depósitos — todo con embeds y botones, sin comandos de texto.
+
+---
+
+## 📁 Archivos
+
+```
+almacen_bot/
+├── bot.py           # Bot principal
+├── database.py      # Base de datos Turso (libSQL)
+├── keep_alive.py    # Health check para Render
+├── requirements.txt # Dependencias
+└── README.md        # Este archivo
+```
+
+---
+
+## 🗄️ Setup de Turso (base de datos)
+
+1. Creá una cuenta en [turso.tech](https://turso.tech) (tiene free tier)
+2. Instalá la CLI: `curl -sSfL https://get.tur.so/install.sh | bash`
+3. Logueate: `turso auth login`
+4. Creá la base de datos:
+   ```bash
+   turso db create almacen-bot
+   ```
+5. Obtenés la URL:
+   ```bash
+   turso db show almacen-bot --url
+   # libsql://almacen-bot-tuusuario.turso.io
+   ```
+6. Creás el token:
+   ```bash
+   turso db tokens create almacen-bot
+   # eyJhbGc...
+   ```
+7. Guardá la URL y el token — los vas a necesitar en las variables de entorno.
+
+---
+
+## 🚀 Deploy en Render
+
+1. Subí los archivos a un repo de GitHub (privado está bien)
+2. En [render.com](https://render.com), creá un **Web Service** nuevo
+3. Conectalo al repo
+4. Configuración del servicio:
+   - **Runtime**: Python 3
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `python bot.py`
+   - **Plan**: Free (alcanza para un bot)
+
+### Variables de entorno en Render
+
+| Variable            | Valor                                        |
+|---------------------|----------------------------------------------|
+| `DISCORD_TOKEN`     | Token de tu bot de Discord                   |
+| `GUILD_ID`          | ID de tu servidor                            |
+| `TURSO_URL`         | `libsql://almacen-bot-tuusuario.turso.io`    |
+| `TURSO_TOKEN`       | Token que generaste con la CLI               |
+| `CHANNEL_DASHBOARD` | ID del canal `#📊-dashboard`                |
+| `CHANNEL_VENTAS`    | ID del canal `#🛒-ventas`                   |
+| `CHANNEL_STOCK`     | ID del canal `#📦-stock`                    |
+| `CHANNEL_GASTOS`    | ID del canal `#💸-gastos`                   |
+| `CHANNEL_DEPOSITOS` | ID del canal `#💰-depositos`                |
+| `CHANNEL_HISTORIAL` | ID del canal `#📜-historial`                |
+
+---
+
+## ⏰ UptimeRobot (para que no duerma en Render free)
+
+1. Creá cuenta en [uptimerobot.com](https://uptimerobot.com)
+2. Nuevo monitor → **HTTP(s)**
+3. URL: `https://tu-app.onrender.com/health`
+4. Intervalo: **5 minutos**
+5. Listo — UptimeRobot va a pinguear el bot y mantenerlo despierto.
+
+---
+
+## 📌 Canales que necesitás crear en Discord
+
+| Canal              | Descripción                                       |
+|--------------------|---------------------------------------------------|
+| `📊-dashboard`     | Panel completo: balance, stock, stats (10s)       |
+| `🛒-ventas`        | Registrar ventas — genera depósito automático     |
+| `📦-stock`         | Ver y gestionar el stock                          |
+| `💸-gastos`        | Registrar gastos                                  |
+| `💰-depositos`     | Avisos de depósito automáticos con confirmación ✅ |
+| `📜-historial`     | Log automático de todo                            |
+
+---
+
+## 🔐 Permisos del bot (Discord Developer Portal)
+
+**Privileged Gateway Intents** — activar los 3:
+- ✅ Server Members Intent
+- ✅ Message Content Intent
+- ✅ Presence Intent
+
+**Permisos del bot:**
+- ✅ Read/Send Messages
+- ✅ Manage Messages (para limpiar canales)
+- ✅ Embed Links
+- ✅ Add Reactions
+- ✅ Read Message History
+- ✅ Use Application Commands
+
+---
+
+## 🛒 Flujo de venta
+
+1. Alguien presiona **Registrar Venta** en `#🛒-ventas`
+2. Elige el producto y completa cantidad + precio real
+3. El stock se descuenta automáticamente
+4. El bot genera un aviso en `#💰-depositos` con el monto total y un código único
+5. Van al juego, depositan a la org con ese código
+6. Reaccionan con ✅ al mensaje → depósito confirmado
+7. El dashboard se actualiza en los próximos 10 segundos
+
+---
+
+## 👥 Roles
+
+- **Todos los miembros**: registrar ventas, gastos, ingresar stock
+- **Admin / Dueño**: agregar productos, editar precios, `/resetpaneles`
+
+Para cambiar los roles admin, editá en `bot.py`:
+```python
+ADMIN_ROLES = ["Admin", "admin", "Dueño", "dueño"]
+```
+
+---
+
+## 🔧 Slash Commands
+
+| Comando          | Descripción                        |
+|------------------|------------------------------------|
+| `/historial`     | Ver los últimos 20 movimientos     |
+| `/resetpaneles`  | [ADMIN] Resetear todos los paneles |
