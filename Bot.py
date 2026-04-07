@@ -79,75 +79,96 @@ _db_ready = False
 #  DASHBOARD
 # ══════════════════════════════════════════════════════════
 async def build_dashboard_embed() -> discord.Embed:
-    balance = await db.get_balance()
-    productos = await db.get_productos()
-    ventas_por_user = await db.get_ventas_por_usuario()
-    ventas_por_prod = await db.get_ventas_por_producto()
+    balance          = await db.get_balance()
+    productos        = await db.get_productos()
+    ventas_por_user  = await db.get_ventas_por_usuario()
+    gastos_por_user  = await db.get_gastos_por_usuario()
+    ventas_por_prod  = await db.get_ventas_por_producto()
+
+    neto      = balance["neto"]
+    pendiente = balance["pendiente"]
 
     embed = discord.Embed(
         title="🏪  ALMACÉN — PANEL DE CONTROL",
-        description=f"{SEP}\n📡  *Dashboard actualizado en tiempo real*\n{SEP}",
+        description=f"{SEP}\n📡  *Dashboard en tiempo real — se actualiza cada 10s*\n{SEP}",
         color=COLOR_MORADO
     )
 
-    # ── Balance general ──
-    neto = balance["neto"]
-    color_neto = "🟢" if neto >= 0 else "🔴"
+    # Balance completo
     embed.add_field(
         name="💰  BALANCE GENERAL",
         value=(
             f"```\n"
-            f"  Ventas totales : {fmt_monto(balance['ventas'])}\n"
-            f"  Gastos totales : {fmt_monto(balance['gastos'])}\n"
-            f"  Depositado     : {fmt_monto(balance['depositos'])}\n"
-            f"{'─'*32}\n"
-            f"  Ganancia neta  : {fmt_monto(neto)}\n"
+            f"  Ventas totales    {fmt_monto(balance['ventas']):>15}\n"
+            f"  Gastos totales  - {fmt_monto(balance['gastos']):>15}\n"
+            f"  {'─'*34}\n"
+            f"  Ganancia neta     {fmt_monto(neto):>15}\n"
             f"```"
         ),
         inline=False
     )
 
-    # ── Stats por socio ──
-    if ventas_por_user:
-        lines = []
-        medals = ["🥇", "🥈", "🥉"]
-        for i, v in enumerate(ventas_por_user[:3]):
-            med = medals[i] if i < 3 else "▸"
-            nombre = v["usuario"].split("#")[0] if v["usuario"] else "?"
-            lines.append(f"{med}  **{nombre}** — {fmt_monto(v['total'])}  `({v['cant']} ventas)`")
-        embed.add_field(
-            name="👥  VENTAS POR SOCIO",
-            value="\n".join(lines) or "Sin datos",
-            inline=True
-        )
+    # Depositos
+    icono_pend = "⚠️" if pendiente > 0 else "✅"
+    embed.add_field(
+        name="🏦  DEPÓSITOS A LA ORG",
+        value=(
+            f"✅  Confirmado:  **{fmt_monto(balance['depositos'])}**\n"
+            f"{icono_pend}  Pendiente:    **{fmt_monto(pendiente)}**"
+            + ("  ← ¡A depositar!" if pendiente > 0 else "")
+        ),
+        inline=True
+    )
 
-    # ── Top productos ──
-    if ventas_por_prod:
-        lines = []
-        for v in ventas_por_prod[:5]:
-            prod = v["producto"].capitalize()
-            lines.append(f"▸  **{prod}** — {v['unidades']} und · {fmt_monto(v['total'])}")
+    # Gastos por socio
+    if gastos_por_user:
+        g_lines = []
+        for g in gastos_por_user[:4]:
+            nombre = g["usuario"].split("#")[0] if g["usuario"] else "?"
+            g_lines.append(f"▸  **{nombre}** — {fmt_monto(g['total'])}  `({g['cant']})`")
         embed.add_field(
-            name="📊  TOP PRODUCTOS",
-            value="\n".join(lines) or "Sin ventas aún",
+            name="💸  GASTOS POR SOCIO",
+            value="\n".join(g_lines) or "Sin gastos",
             inline=True
         )
 
     embed.add_field(name="", value=SEP, inline=False)
 
-    # ── Stock actual ──
+    # Ventas por socio
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+    if ventas_por_user:
+        v_lines = []
+        for i, v in enumerate(ventas_por_user[:5]):
+            med    = medals[i] if i < len(medals) else "▸"
+            nombre = v["usuario"].split("#")[0] if v["usuario"] else "?"
+            v_lines.append(f"{med}  **{nombre}** — {fmt_monto(v['total'])}  `{v['cant']} ventas`")
+        embed.add_field(
+            name="👥  VENTAS POR SOCIO",
+            value="\n".join(v_lines) or "Sin ventas",
+            inline=True
+        )
+
+    # Top productos
+    if ventas_por_prod:
+        p_lines = []
+        for v in ventas_por_prod[:6]:
+            prod = v["producto"].capitalize()
+            p_lines.append(f"▸  **{prod}** — {v['unidades']} und · {fmt_monto(v['total'])}")
+        embed.add_field(
+            name="📊  TOP PRODUCTOS",
+            value="\n".join(p_lines) or "Sin ventas aún",
+            inline=True
+        )
+
+    embed.add_field(name="", value=SEP, inline=False)
+
+    # Stock
     stock_lines = []
     for p in productos:
-        stk = int(p["stock"])
-        if stk == 0:
-            icono = "🔴"
-        elif stk <= 3:
-            icono = "🟡"
-        else:
-            icono = "🟢"
+        stk   = int(p["stock"])
+        icono = "🔴" if stk == 0 else ("🟡" if stk <= 3 else "🟢")
         stock_lines.append(f"{icono}  {p['emoji']}  `{p['nombre']:<12}`  **{stk}**")
 
-    # Dividir en 2 columnas
     mid = (len(stock_lines) + 1) // 2
     embed.add_field(
         name="📦  STOCK ACTUAL",
@@ -155,13 +176,13 @@ async def build_dashboard_embed() -> discord.Embed:
         inline=True
     )
     embed.add_field(
-        name="‎",
-        value="\n".join(stock_lines[mid:]) or "‎",
+        name="​",
+        value="\n".join(stock_lines[mid:]) or "​",
         inline=True
     )
 
     embed.add_field(name="", value=SEP, inline=False)
-    embed.set_footer(text="🟢 OK  🟡 Bajo (≤3)  🔴 Sin stock  •  Se actualiza cada 10s")
+    embed.set_footer(text="🟢 OK  🟡 Bajo (≤3)  🔴 Sin stock  •  Actualizado")
     embed.timestamp = datetime.now(timezone.utc)
     return embed
 
@@ -945,36 +966,6 @@ async def cmd_reset(interaction: discord.Interaction):
 
     await interaction.followup.send("✅ Todos los paneles fueron reseteados.", ephemeral=True)
 
-
-@bot.tree.command(name="balance", description="Ver el balance general")
-async def cmd_balance(interaction: discord.Interaction):
-    balance = await db.get_balance()
-    ventas_user = await db.get_ventas_por_usuario()
-    gastos_user = await db.get_gastos_por_usuario()
-    ventas_prod = await db.get_ventas_por_producto()
-
-    embed = discord.Embed(title="📊  BALANCE COMPLETO", color=COLOR_MORADO)
-    embed.add_field(
-        name="💰 Resumen",
-        value=(
-            f"Ventas: **{fmt_monto(balance['ventas'])}**\n"
-            f"Gastos: **{fmt_monto(balance['gastos'])}**\n"
-            f"Depósitos: **{fmt_monto(balance['depositos'])}**\n"
-            f"Ganancia neta: **{fmt_monto(balance['neto'])}**"
-        ),
-        inline=False
-    )
-    if ventas_user:
-        lines = [f"▸ **{v['usuario'].split('#')[0]}**: {fmt_monto(v['total'])} ({v['cant']} ventas)" for v in ventas_user]
-        embed.add_field(name="🛒 Ventas por socio", value="\n".join(lines), inline=True)
-    if gastos_user:
-        lines = [f"▸ **{g['usuario'].split('#')[0]}**: {fmt_monto(g['total'])} ({g['cant']} gastos)" for g in gastos_user]
-        embed.add_field(name="💸 Gastos por socio", value="\n".join(lines), inline=True)
-    if ventas_prod:
-        lines = [f"▸ **{v['producto'].capitalize()}**: {v['unidades']} und · {fmt_monto(v['total'])}" for v in ventas_prod[:8]]
-        embed.add_field(name="📦 Por producto", value="\n".join(lines), inline=False)
-    embed.timestamp = datetime.now(timezone.utc)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="historial", description="Ver historial de movimientos")
