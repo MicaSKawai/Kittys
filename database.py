@@ -15,8 +15,9 @@ class Database:
         self.client = None
 
     async def init(self):
+        http_url = TURSO_URL.replace("libsql://", "https://")
         self.client = libsql_client.create_client(
-            url=TURSO_URL,
+            url=http_url,
             auth_token=TURSO_TOKEN,
         )
         await self._create_tables()
