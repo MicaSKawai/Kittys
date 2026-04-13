@@ -1014,6 +1014,68 @@ async def cmd_historial(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
+@bot.tree.command(name="resetdb", description="[ADMIN] Borra todos los datos y resetea el bot desde cero")
+async def cmd_resetdb(interaction: discord.Interaction):
+    if not es_admin(interaction.user):
+        return await interaction.response.send_message("❌ Solo admins.", ephemeral=True)
+
+    class ConfirmarReset(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=30)
+
+        @discord.ui.button(label="⚠️ SÍ, BORRAR TODO", style=discord.ButtonStyle.danger)
+        async def confirmar(self, inter: discord.Interaction, button: discord.ui.Button):
+            await inter.response.defer(ephemeral=True)
+            await db._q("DELETE FROM ventas")
+            await db._q("DELETE FROM gastos")
+            await db._q("DELETE FROM depositos")
+            await db._q("DELETE FROM ingresos_stock")
+            await db._q("DELETE FROM config")
+            await db._q("UPDATE productos SET stock=0")
+
+            guild = inter.guild
+            for config_key, canal_id, build_fn, view_cls in [
+                ("panel_ventas_id",    CHANNEL_VENTAS,    build_embed_ventas,    PanelVentas),
+                ("panel_gastos_id",    CHANNEL_GASTOS,    build_embed_gastos,    PanelGastos),
+                ("panel_depositos_id", CHANNEL_DEPOSITOS, build_embed_depositos, PanelDepositos),
+                ("panel_stock_id",     CHANNEL_STOCK,     build_embed_stock,     PanelStock),
+            ]:
+                ch = guild.get_channel(canal_id)
+                if ch:
+                    await ch.purge(limit=50)
+                await _refrescar_panel(config_key, canal_id, build_fn, view_cls, purge_on_new=True)
+
+            ch_dash = guild.get_channel(CHANNEL_DASHBOARD)
+            if ch_dash:
+                await ch_dash.purge(limit=20)
+            await refrescar_dashboard()
+
+            ch_hist = guild.get_channel(CHANNEL_HISTORIAL)
+            if ch_hist:
+                await ch_hist.purge(limit=100)
+                log_embed = discord.Embed(
+                    description="🔄  **Reset completo** — Bot iniciado desde cero.",
+                    color=COLOR_GRIS
+                )
+                log_embed.timestamp = datetime.now(timezone.utc)
+                await ch_hist.send(embed=log_embed)
+
+            await inter.followup.send("✅ Todo reseteado. El bot arranca desde cero.", ephemeral=True)
+            self.stop()
+
+        @discord.ui.button(label="Cancelar", style=discord.ButtonStyle.secondary)
+        async def cancelar(self, inter: discord.Interaction, button: discord.ui.Button):
+            await inter.response.send_message("❌ Reset cancelado.", ephemeral=True)
+            self.stop()
+
+    await interaction.response.send_message(
+        "⚠️  **¿Seguro que querés borrar TODOS los datos?**\n"
+        "Esto elimina ventas, gastos, depósitos e historial. No hay vuelta atrás.",
+        view=ConfirmarReset(),
+        ephemeral=True
+    )
+
+
 # ══════════════════════════════════════════════════════════
 #  STARTUP
 # ══════════════════════════════════════════════════════════
