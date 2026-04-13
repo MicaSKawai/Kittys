@@ -18,12 +18,11 @@ from keep_alive import keep_alive
 keep_alive()
 
 # ══════════════════════════════════════════════════════════
-#  CONFIGURACIÓN — completá con tus IDs reales
+#  CONFIGURACIÓN
 # ══════════════════════════════════════════════════════════
 TOKEN    = os.getenv("DISCORD_TOKEN")
 GUILD_ID = int(os.getenv("GUILD_ID", "0"))
 
-# IDs de canales — reemplazá con los tuyos
 CHANNEL_DASHBOARD  = int(os.getenv("CHANNEL_DASHBOARD",  "0"))
 CHANNEL_VENTAS     = int(os.getenv("CHANNEL_VENTAS",     "0"))
 CHANNEL_STOCK      = int(os.getenv("CHANNEL_STOCK",      "0"))
@@ -31,10 +30,8 @@ CHANNEL_GASTOS     = int(os.getenv("CHANNEL_GASTOS",     "0"))
 CHANNEL_DEPOSITOS  = int(os.getenv("CHANNEL_DEPOSITOS",  "0"))
 CHANNEL_HISTORIAL  = int(os.getenv("CHANNEL_HISTORIAL",  "0"))
 
-# Roles con permiso completo (sin esto solo pueden ver)
 ADMIN_ROLES = ["Admin", "admin", "Dueño", "dueño"]
 
-# Colores
 COLOR_VERDE   = 0x2ECC71
 COLOR_ROJO    = 0xE74C3C
 COLOR_AZUL    = 0x3498DB
@@ -94,7 +91,6 @@ async def build_dashboard_embed() -> discord.Embed:
         color=COLOR_MORADO
     )
 
-    # Balance completo
     embed.add_field(
         name="💰  BALANCE GENERAL",
         value=(
@@ -108,7 +104,6 @@ async def build_dashboard_embed() -> discord.Embed:
         inline=False
     )
 
-    # Depositos
     icono_pend = "⚠️" if pendiente > 0 else "✅"
     embed.add_field(
         name="🏦  DEPÓSITOS A LA ORG",
@@ -120,7 +115,6 @@ async def build_dashboard_embed() -> discord.Embed:
         inline=True
     )
 
-    # Gastos por socio
     if gastos_por_user:
         g_lines = []
         for g in gastos_por_user[:4]:
@@ -134,7 +128,6 @@ async def build_dashboard_embed() -> discord.Embed:
 
     embed.add_field(name="", value=SEP, inline=False)
 
-    # Ventas por socio
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
     if ventas_por_user:
         v_lines = []
@@ -148,7 +141,6 @@ async def build_dashboard_embed() -> discord.Embed:
             inline=True
         )
 
-    # Top productos
     if ventas_por_prod:
         p_lines = []
         for v in ventas_por_prod[:6]:
@@ -162,7 +154,6 @@ async def build_dashboard_embed() -> discord.Embed:
 
     embed.add_field(name="", value=SEP, inline=False)
 
-    # Stock
     stock_lines = []
     for p in productos:
         stk   = int(p["stock"])
@@ -266,73 +257,28 @@ class ModalVenta(discord.ui.Modal, title="💰 Registrar Venta"):
             interaction.user.id, str(interaction.user)
         )
 
-        # ── Aviso de venta en el canal de ventas ──
-        embed = discord.Embed(
-            title="🛒  VENTA REGISTRADA",
-            color=COLOR_VERDE
+        # Confirmación solo ephemeral al vendedor — NO manda mensaje al canal
+        await interaction.response.send_message(
+            f"✅  Venta registrada: **{cant}x {self.producto.capitalize()}** — **{fmt_monto(total)}**\n"
+            f"Cuando quieras cerrar el día usá el botón **Cerrar Día / Generar Depósito** en <#{CHANNEL_DEPOSITOS}>.",
+            ephemeral=True
         )
-        embed.add_field(name="▸ Producto",     value=f"**{self.producto.capitalize()}**", inline=True)
-        embed.add_field(name="▸ Cantidad",     value=f"**{cant}** unidades",             inline=True)
-        embed.add_field(name="▸ Precio/u",     value=fmt_monto(precio),                  inline=True)
-        embed.add_field(name="▸ Total cobrado",value=f"**{fmt_monto(total)}**",           inline=True)
-        embed.add_field(name="▸ Vendedor",     value=interaction.user.mention,           inline=True)
-        embed.add_field(
-            name="💰 Depósito",
-            value=f"Se generó aviso en <#{CHANNEL_DEPOSITOS}>",
-            inline=False
-        )
-        embed.set_footer(text="Sistema Almacén")
-        embed.timestamp = datetime.now(timezone.utc)
-        await interaction.response.send_message(embed=embed)
 
+        # Log en historial
         guild = bot.get_guild(GUILD_ID)
-        if not guild:
-            asyncio.create_task(refrescar_panel_ventas())
-            return
-
-        # ── Aviso de depósito automático ──
-        ch_dep = guild.get_channel(CHANNEL_DEPOSITOS)
-        if ch_dep:
-            codigo = gen_codigo()
-            dep_embed = discord.Embed(
-                title="💰  DEPÓSITO PENDIENTE",
-                description=f"{SEP}\nSe realizó una venta y hay que depositar a la organización.\n{SEP}",
-                color=COLOR_ORO
-            )
-            dep_embed.add_field(name="🛒  Venta",       value=f"{cant}x **{self.producto.capitalize()}**", inline=True)
-            dep_embed.add_field(name="💵  Monto",       value=f"**{fmt_monto(total)}**",                   inline=True)
-            dep_embed.add_field(name="🏷️  Código org.", value=f"**`{codigo}`**",                           inline=True)
-            dep_embed.add_field(name="👤  Vendedor",    value=interaction.user.mention,                    inline=True)
-            dep_embed.add_field(
-                name="✅  Confirmación",
-                value="Reaccioná con ✅ una vez que hayas depositado el dinero.",
-                inline=False
-            )
-            dep_embed.set_footer(text="Sistema Almacén • Depósitos automáticos")
-            dep_embed.timestamp = datetime.now(timezone.utc)
-
-            dep_msg = await ch_dep.send(embed=dep_embed)
-            await dep_msg.add_reaction("✅")
-
-            await db.registrar_deposito(
-                total, codigo,
-                interaction.user.id, str(interaction.user),
-                str(dep_msg.id)
-            )
-
-        # ── Log en historial ──
-        ch_hist = guild.get_channel(CHANNEL_HISTORIAL)
-        if ch_hist:
-            log_embed = discord.Embed(
-                description=(
-                    f"🛒  **{interaction.user.display_name}** vendió "
-                    f"**{cant}x {self.producto.capitalize()}** "
-                    f"a {fmt_monto(precio)}/u — Total: **{fmt_monto(total)}** → depósito pendiente ⏳"
-                ),
-                color=COLOR_VERDE
-            )
-            log_embed.timestamp = datetime.now(timezone.utc)
-            await ch_hist.send(embed=log_embed)
+        if guild:
+            ch_hist = guild.get_channel(CHANNEL_HISTORIAL)
+            if ch_hist:
+                log_embed = discord.Embed(
+                    description=(
+                        f"🛒  **{interaction.user.display_name}** vendió "
+                        f"**{cant}x {self.producto.capitalize()}** "
+                        f"a {fmt_monto(precio)}/u — Total: **{fmt_monto(total)}**"
+                    ),
+                    color=COLOR_VERDE
+                )
+                log_embed.timestamp = datetime.now(timezone.utc)
+                await ch_hist.send(embed=log_embed)
 
         asyncio.create_task(refrescar_panel_ventas())
 
@@ -361,17 +307,13 @@ class ModalGasto(discord.ui.Modal, title="💸 Registrar Gasto"):
             interaction.user.id, str(interaction.user)
         )
 
-        embed = discord.Embed(
-            title="💸  GASTO REGISTRADO",
-            color=COLOR_ROJO
+        # Confirmación ephemeral — NO manda mensaje al canal
+        await interaction.response.send_message(
+            f"✅  Gasto registrado: *{self.descripcion.value.strip()}* — **{fmt_monto(monto)}**",
+            ephemeral=True
         )
-        embed.add_field(name="▸ Descripción", value=self.descripcion.value, inline=False)
-        embed.add_field(name="▸ Monto", value=f"**{fmt_monto(monto)}**", inline=True)
-        embed.add_field(name="▸ Registrado por", value=interaction.user.mention, inline=True)
-        embed.set_footer(text="Sistema Almacén")
-        embed.timestamp = datetime.now(timezone.utc)
-        await interaction.response.send_message(embed=embed)
 
+        # Log en historial
         guild = bot.get_guild(GUILD_ID)
         if guild:
             ch_hist = guild.get_channel(CHANNEL_HISTORIAL)
@@ -419,18 +361,10 @@ class ModalIngresoStock(discord.ui.Modal, title="📦 Ingresar Stock"):
             self.notas.value.strip() or None
         )
 
-        embed = discord.Embed(
-            title="📦  STOCK INGRESADO",
-            color=COLOR_AZUL
+        await interaction.response.send_message(
+            f"✅  Stock ingresado: **+{cant}x {self.producto.capitalize()}**",
+            ephemeral=True
         )
-        embed.add_field(name="▸ Producto", value=f"**{self.producto.capitalize()}**", inline=True)
-        embed.add_field(name="▸ Cantidad", value=f"**+{cant}**", inline=True)
-        embed.add_field(name="▸ Por", value=interaction.user.mention, inline=True)
-        if self.notas.value:
-            embed.add_field(name="▸ Notas", value=self.notas.value, inline=False)
-        embed.set_footer(text="Sistema Almacén")
-        embed.timestamp = datetime.now(timezone.utc)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
 
         guild = bot.get_guild(GUILD_ID)
         if guild:
@@ -440,6 +374,7 @@ class ModalIngresoStock(discord.ui.Modal, title="📦 Ingresar Stock"):
                     description=(
                         f"📦  **{interaction.user.display_name}** ingresó "
                         f"**{cant}x {self.producto.capitalize()}** al stock"
+                        + (f" — *{self.notas.value.strip()}*" if self.notas.value.strip() else "")
                     ),
                     color=COLOR_AZUL
                 )
@@ -619,6 +554,90 @@ class PanelDepositos(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
+    @discord.ui.button(label="💰 Cerrar Día / Generar Depósito", style=discord.ButtonStyle.success,
+                       emoji="📋", custom_id="deposito_cerrar_dia")
+    async def btn_cerrar_dia(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Genera un resumen de ventas pendientes de depositar para el usuario que lo presiona."""
+        if not _db_ready:
+            return await interaction.response.send_message("⏳ Bot iniciando...", ephemeral=True)
+
+        # Obtener ventas no depositadas del usuario
+        ventas_pendientes = await db.get_ventas_sin_depositar(interaction.user.id)
+
+        if not ventas_pendientes:
+            return await interaction.response.send_message(
+                "✅ No tenés ventas pendientes de depositar.", ephemeral=True
+            )
+
+        total = sum(v["total"] for v in ventas_pendientes)
+        codigo = gen_codigo()
+
+        # Armar detalle de ventas
+        detalle_lines = []
+        for v in ventas_pendientes:
+            ts = v["fecha"][:16].replace("T", " ")
+            detalle_lines.append(
+                f"▸  `{ts}`  {v['producto'].capitalize()}  x{v['cantidad']}  **{fmt_monto(v['total'])}**"
+            )
+
+        guild = bot.get_guild(GUILD_ID)
+        ch_dep = guild.get_channel(CHANNEL_DEPOSITOS) if guild else None
+
+        if not ch_dep:
+            return await interaction.response.send_message("❌ Canal de depósitos no encontrado.", ephemeral=True)
+
+        dep_embed = discord.Embed(
+            title="💰  DEPÓSITO PENDIENTE",
+            description=f"{SEP}\nResumen de ventas del día — hay que depositar a la organización.\n{SEP}",
+            color=COLOR_ORO
+        )
+        dep_embed.add_field(
+            name="👤  Vendedor",
+            value=interaction.user.mention,
+            inline=True
+        )
+        dep_embed.add_field(
+            name="💵  Total a depositar",
+            value=f"**{fmt_monto(total)}**",
+            inline=True
+        )
+        dep_embed.add_field(
+            name="🏷️  Código org.",
+            value=f"**`{codigo}`**",
+            inline=True
+        )
+        dep_embed.add_field(
+            name=f"🛒  Ventas incluidas ({len(ventas_pendientes)})",
+            value="\n".join(detalle_lines[:10]) + ("\n*...y más*" if len(detalle_lines) > 10 else ""),
+            inline=False
+        )
+        dep_embed.add_field(
+            name="✅  Confirmación",
+            value="Reaccioná con ✅ una vez que hayas depositado el dinero.",
+            inline=False
+        )
+        dep_embed.set_footer(text="Sistema Almacén • Depósito de cierre de día")
+        dep_embed.timestamp = datetime.now(timezone.utc)
+
+        dep_msg = await ch_dep.send(embed=dep_embed)
+        await dep_msg.add_reaction("✅")
+
+        # Registrar el depósito y marcar las ventas como depositadas
+        await db.registrar_deposito(
+            total, codigo,
+            interaction.user.id, str(interaction.user),
+            str(dep_msg.id)
+        )
+        await db.marcar_ventas_depositadas(interaction.user.id, [v["id"] for v in ventas_pendientes])
+
+        await interaction.response.send_message(
+            f"✅ Depósito generado por **{fmt_monto(total)}** con código `{codigo}`.\n"
+            f"Fijate en <#{CHANNEL_DEPOSITOS}> y reaccioná con ✅ cuando lo hayas hecho.",
+            ephemeral=True
+        )
+
+        asyncio.create_task(refrescar_panel_depositos())
+
     @discord.ui.button(label="Ver Pendientes", style=discord.ButtonStyle.danger,
                        emoji="⏳", custom_id="deposito_pendientes")
     async def btn_pendientes(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -724,10 +743,11 @@ async def build_embed_ventas() -> discord.Embed:
         for v in ventas:
             ts = v["fecha"][:16].replace("T", " ")
             nombre = v["usuario"].split("#")[0]
+            dep = "⏳" if not v.get("depositado") else "✅"
             lines.append(
-                f"🛒  `{ts}`  **{nombre}**  —  {v['producto'].capitalize()}  x{v['cantidad']}  **{fmt_monto(v['total'])}**"
+                f"{dep}  `{ts}`  **{nombre}**  —  {v['producto'].capitalize()}  x{v['cantidad']}  **{fmt_monto(v['total'])}**"
             )
-        embed.add_field(name="📋  Últimas ventas", value="\n".join(lines), inline=False)
+        embed.add_field(name="📋  Últimas ventas  (⏳ sin depositar  ✅ depositado)", value="\n".join(lines), inline=False)
     embed.set_footer(text="Sistema Almacén  •  Panel de Ventas")
     embed.timestamp = datetime.now(timezone.utc)
     return embed
@@ -772,12 +792,13 @@ async def build_embed_depositos() -> discord.Embed:
         title="💰  PANEL DE DEPÓSITOS",
         description=(
             f"{SEP}\n"
-            "Los depósitos se generan **automáticamente** con cada venta.\n"
-            "El monto completo de la venta debe depositarse a la organización.\n\n"
+            "Acá se generan los depósitos al **cerrar el día**.\n"
+            "Cada vendedor genera el suyo con el total de sus ventas.\n\n"
             "**¿Cómo funciona?**\n"
-            "1️⃣  Alguien registra una venta → aparece el aviso acá\n"
-            "2️⃣  Depositás en el juego usando el código indicado\n"
-            "3️⃣  Reaccionás con ✅ al mensaje para confirmar\n"
+            "1️⃣  Vendés durante el día normalmente\n"
+            "2️⃣  Al terminar, presioná **Cerrar Día / Generar Depósito**\n"
+            "3️⃣  Depositás en el juego con el código generado\n"
+            "4️⃣  Reaccionás con ✅ al mensaje para confirmar\n"
             f"{SEP}"
         ),
         color=COLOR_ORO
@@ -801,7 +822,7 @@ async def build_embed_depositos() -> discord.Embed:
             ),
             inline=False
         )
-    embed.set_footer(text="Sistema Almacén  •  Depósitos automáticos por venta")
+    embed.set_footer(text="Sistema Almacén  •  Depósitos de cierre de día")
     embed.timestamp = datetime.now(timezone.utc)
     return embed
 
@@ -883,7 +904,7 @@ async def refrescar_panel_stock():
 
 
 # ══════════════════════════════════════════════════════════
-#  CONFIRMACIÓN DE DEPÓSITO POR REACCIÓN
+#  CONFIRMACIÓN DE DEPÓSITO POR REACCIÓN ✅ — FIX
 # ══════════════════════════════════════════════════════════
 
 @bot.event
@@ -908,18 +929,19 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     if deposito["confirmado"]:
         return
 
-    await db.confirmar_deposito(deposito["id"])
+    # FIX: usar msg_id, no id
+    await db.confirmar_deposito(str(payload.message_id))
 
     try:
         msg = await channel.fetch_message(payload.message_id)
         embed = msg.embeds[0] if msg.embeds else discord.Embed()
         embed.color = COLOR_VERDE
-        embed.set_footer(text=f"✅ Confirmado por {guild.get_member(payload.user_id).display_name if guild.get_member(payload.user_id) else 'alguien'}")
+        confirmador = guild.get_member(payload.user_id)
+        embed.set_footer(text=f"✅ Confirmado por {confirmador.display_name if confirmador else 'alguien'}")
         await msg.edit(embed=embed)
     except Exception:
         pass
 
-    # Mensaje de confirmación en historial
     ch_hist = guild.get_channel(CHANNEL_HISTORIAL)
     if ch_hist:
         log_embed = discord.Embed(
@@ -936,7 +958,7 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
 
 
 # ══════════════════════════════════════════════════════════
-#  SLASH COMMANDS (solo admin)
+#  SLASH COMMANDS
 # ══════════════════════════════════════════════════════════
 
 @bot.tree.command(name="resetpaneles", description="[ADMIN] Resetea todos los paneles")
@@ -965,7 +987,6 @@ async def cmd_reset(interaction: discord.Interaction):
     await refrescar_dashboard()
 
     await interaction.followup.send("✅ Todos los paneles fueron reseteados.", ephemeral=True)
-
 
 
 @bot.tree.command(name="historial", description="Ver historial de movimientos")
@@ -1058,7 +1079,6 @@ async def startup():
 @bot.event
 async def on_ready():
     print(f"✅ Bot conectado: {bot.user}", flush=True)
-    # Registrar views persistentes
     bot.add_view(PanelVentas())
     bot.add_view(PanelGastos())
     bot.add_view(PanelDepositos())
