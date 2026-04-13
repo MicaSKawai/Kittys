@@ -6,8 +6,8 @@ import os
 import libsql_client
 from datetime import datetime, timezone
 
-TURSO_URL   = os.getenv("TURSO_URL")    # libsql://tu-db.turso.io
-TURSO_TOKEN = os.getenv("TURSO_TOKEN")  # token de autenticación
+TURSO_URL   = os.getenv("TURSO_URL")
+TURSO_TOKEN = os.getenv("TURSO_TOKEN")
 
 
 class Database:
@@ -25,17 +25,14 @@ class Database:
         print("✅ Base de datos Turso lista", flush=True)
 
     async def _q(self, sql: str, args: tuple = ()):
-        """Ejecuta una query y devuelve el ResultSet."""
         return await self.client.execute(libsql_client.Statement(sql, list(args)))
 
     async def _rows(self, sql: str, args: tuple = ()):
-        """Devuelve las filas como lista de dicts."""
         rs = await self._q(sql, args)
         cols = rs.columns
         return [dict(zip(cols, row)) for row in rs.rows]
 
     async def _row(self, sql: str, args: tuple = ()):
-        """Devuelve una sola fila como dict, o None."""
         rows = await self._rows(sql, args)
         return rows[0] if rows else None
 
@@ -66,7 +63,8 @@ class Database:
                     total       INTEGER NOT NULL,
                     usuario_id  INTEGER NOT NULL,
                     usuario     TEXT NOT NULL,
-                    fecha       TEXT NOT NULL
+                    fecha       TEXT NOT NULL,
+                    depositado  INTEGER DEFAULT 0
                 )
             """),
             libsql_client.Statement("""
@@ -104,6 +102,14 @@ class Database:
             """),
         ]
         await self.client.batch(stmts)
+
+        # Migración: agregar columna depositado si no existe en bases ya creadas
+        try:
+            await self._q("ALTER TABLE ventas ADD COLUMN depositado INTEGER DEFAULT 0")
+            print("✅ Migración: columna depositado agregada", flush=True)
+        except Exception:
+            pass  # Ya existe, ignorar
+
         print("✅ Tablas verificadas", flush=True)
 
     async def _seed_productos(self):
@@ -177,7 +183,7 @@ class Database:
         total = cantidad * precio_unit
         now = datetime.now(timezone.utc).isoformat()
         await self._q(
-            "INSERT INTO ventas (producto, cantidad, precio_unit, total, usuario_id, usuario, fecha) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO ventas (producto, cantidad, precio_unit, total, usuario_id, usuario, fecha, depositado) VALUES (?,?,?,?,?,?,?,0)",
             (producto, cantidad, precio_unit, total, usuario_id, usuario, now)
         )
         return total
@@ -189,6 +195,23 @@ class Database:
                 (usuario_id, limit)
             )
         return await self._rows("SELECT * FROM ventas ORDER BY fecha DESC LIMIT ?", (limit,))
+
+    async def get_ventas_sin_depositar(self, usuario_id: int) -> list:
+        """Devuelve las ventas del usuario que aún no fueron incluidas en un depósito."""
+        return await self._rows(
+            "SELECT * FROM ventas WHERE usuario_id=? AND depositado=0 ORDER BY fecha ASC",
+            (usuario_id,)
+        )
+
+    async def marcar_ventas_depositadas(self, usuario_id: int, ids: list):
+        """Marca una lista de ventas como depositadas."""
+        if not ids:
+            return
+        placeholders = ",".join("?" * len(ids))
+        await self._q(
+            f"UPDATE ventas SET depositado=1 WHERE usuario_id=? AND id IN ({placeholders})",
+            tuple([usuario_id] + ids)
+        )
 
     async def get_total_ventas(self) -> int:
         row = await self._row("SELECT COALESCE(SUM(total),0) as s FROM ventas")
