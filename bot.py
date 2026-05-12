@@ -59,6 +59,19 @@ def es_admin(member: discord.Member) -> bool:
 
 
 # ══════════════════════════════════════════════════════════
+#  HELPER — log al historial como texto simple (sin embed)
+# ══════════════════════════════════════════════════════════
+async def log_historial(guild: discord.Guild, texto: str):
+    """Manda una línea simple al canal historial. No usa embed para no llenar el canal."""
+    ch = guild.get_channel(CHANNEL_HISTORIAL)
+    if ch:
+        try:
+            await ch.send(texto)
+        except Exception:
+            pass
+
+
+# ══════════════════════════════════════════════════════════
 #  BOT
 # ══════════════════════════════════════════════════════════
 intents = discord.Intents.default()
@@ -257,28 +270,21 @@ class ModalVenta(discord.ui.Modal, title="💰 Registrar Venta"):
             interaction.user.id, str(interaction.user)
         )
 
-        # Confirmación solo ephemeral al vendedor — NO manda mensaje al canal
+        # Confirmación solo ephemeral al vendedor
         await interaction.response.send_message(
             f"✅  Venta registrada: **{cant}x {self.producto.capitalize()}** — **{fmt_monto(total)}**\n"
             f"Cuando quieras cerrar el día usá el botón **Cerrar Día / Generar Depósito** en <#{CHANNEL_DEPOSITOS}>.",
             ephemeral=True
         )
 
-        # Log en historial
+        # ✅ FIX: log como texto simple, una sola línea, sin embed
         guild = bot.get_guild(GUILD_ID)
         if guild:
-            ch_hist = guild.get_channel(CHANNEL_HISTORIAL)
-            if ch_hist:
-                log_embed = discord.Embed(
-                    description=(
-                        f"🛒  **{interaction.user.display_name}** vendió "
-                        f"**{cant}x {self.producto.capitalize()}** "
-                        f"a {fmt_monto(precio)}/u — Total: **{fmt_monto(total)}**"
-                    ),
-                    color=COLOR_VERDE
-                )
-                log_embed.timestamp = datetime.now(timezone.utc)
-                await ch_hist.send(embed=log_embed)
+            ts = datetime.now(timezone.utc).strftime("%d/%m %H:%M")
+            await log_historial(
+                guild,
+                f"🛒 `{ts}` **{interaction.user.display_name}** — {self.producto.capitalize()} x{cant} — **{fmt_monto(total)}**"
+            )
 
         asyncio.create_task(refrescar_panel_ventas())
 
@@ -307,26 +313,19 @@ class ModalGasto(discord.ui.Modal, title="💸 Registrar Gasto"):
             interaction.user.id, str(interaction.user)
         )
 
-        # Confirmación ephemeral — NO manda mensaje al canal
         await interaction.response.send_message(
             f"✅  Gasto registrado: *{self.descripcion.value.strip()}* — **{fmt_monto(monto)}**",
             ephemeral=True
         )
 
-        # Log en historial
+        # ✅ FIX: log como texto simple
         guild = bot.get_guild(GUILD_ID)
         if guild:
-            ch_hist = guild.get_channel(CHANNEL_HISTORIAL)
-            if ch_hist:
-                log_embed = discord.Embed(
-                    description=(
-                        f"💸  **{interaction.user.display_name}** registró gasto: "
-                        f"*{self.descripcion.value}* — **{fmt_monto(monto)}**"
-                    ),
-                    color=COLOR_ROJO
-                )
-                log_embed.timestamp = datetime.now(timezone.utc)
-                await ch_hist.send(embed=log_embed)
+            ts = datetime.now(timezone.utc).strftime("%d/%m %H:%M")
+            await log_historial(
+                guild,
+                f"💸 `{ts}` **{interaction.user.display_name}** — {self.descripcion.value.strip()[:40]} — **{fmt_monto(monto)}**"
+            )
 
 
 class ModalIngresoStock(discord.ui.Modal, title="📦 Ingresar Stock"):
@@ -366,20 +365,15 @@ class ModalIngresoStock(discord.ui.Modal, title="📦 Ingresar Stock"):
             ephemeral=True
         )
 
+        # ✅ FIX: log como texto simple
         guild = bot.get_guild(GUILD_ID)
         if guild:
-            ch_hist = guild.get_channel(CHANNEL_HISTORIAL)
-            if ch_hist:
-                log_embed = discord.Embed(
-                    description=(
-                        f"📦  **{interaction.user.display_name}** ingresó "
-                        f"**{cant}x {self.producto.capitalize()}** al stock"
-                        + (f" — *{self.notas.value.strip()}*" if self.notas.value.strip() else "")
-                    ),
-                    color=COLOR_AZUL
-                )
-                log_embed.timestamp = datetime.now(timezone.utc)
-                await ch_hist.send(embed=log_embed)
+            ts = datetime.now(timezone.utc).strftime("%d/%m %H:%M")
+            notas_str = f" — {self.notas.value.strip()}" if self.notas.value.strip() else ""
+            await log_historial(
+                guild,
+                f"📦 `{ts}` **{interaction.user.display_name}** — +{cant}x {self.producto.capitalize()}{notas_str}"
+            )
 
         asyncio.create_task(refrescar_panel_stock())
 
@@ -557,11 +551,9 @@ class PanelDepositos(discord.ui.View):
     @discord.ui.button(label="💰 Cerrar Día / Generar Depósito", style=discord.ButtonStyle.success,
                        emoji="📋", custom_id="deposito_cerrar_dia")
     async def btn_cerrar_dia(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Genera un resumen de ventas pendientes de depositar para el usuario que lo presiona."""
         if not _db_ready:
             return await interaction.response.send_message("⏳ Bot iniciando...", ephemeral=True)
 
-        # Obtener ventas no depositadas del usuario
         ventas_pendientes = await db.get_ventas_sin_depositar(interaction.user.id)
 
         if not ventas_pendientes:
@@ -572,7 +564,6 @@ class PanelDepositos(discord.ui.View):
         total = sum(v["total"] for v in ventas_pendientes)
         codigo = gen_codigo()
 
-        # Armar detalle de ventas
         detalle_lines = []
         for v in ventas_pendientes:
             ts = v["fecha"][:16].replace("T", " ")
@@ -591,21 +582,9 @@ class PanelDepositos(discord.ui.View):
             description=f"{SEP}\nResumen de ventas del día — hay que depositar a la organización.\n{SEP}",
             color=COLOR_ORO
         )
-        dep_embed.add_field(
-            name="👤  Vendedor",
-            value=interaction.user.mention,
-            inline=True
-        )
-        dep_embed.add_field(
-            name="💵  Total a depositar",
-            value=f"**{fmt_monto(total)}**",
-            inline=True
-        )
-        dep_embed.add_field(
-            name="🏷️  Código org.",
-            value=f"**`{codigo}`**",
-            inline=True
-        )
+        dep_embed.add_field(name="👤  Vendedor", value=interaction.user.mention, inline=True)
+        dep_embed.add_field(name="💵  Total a depositar", value=f"**{fmt_monto(total)}**", inline=True)
+        dep_embed.add_field(name="🏷️  Código org.", value=f"**`{codigo}`**", inline=True)
         dep_embed.add_field(
             name=f"🛒  Ventas incluidas ({len(ventas_pendientes)})",
             value="\n".join(detalle_lines[:10]) + ("\n*...y más*" if len(detalle_lines) > 10 else ""),
@@ -622,7 +601,6 @@ class PanelDepositos(discord.ui.View):
         dep_msg = await ch_dep.send(embed=dep_embed)
         await dep_msg.add_reaction("✅")
 
-        # Registrar el depósito y marcar las ventas como depositadas
         await db.registrar_deposito(
             total, codigo,
             interaction.user.id, str(interaction.user),
@@ -635,6 +613,14 @@ class PanelDepositos(discord.ui.View):
             f"Fijate en <#{CHANNEL_DEPOSITOS}> y reaccioná con ✅ cuando lo hayas hecho.",
             ephemeral=True
         )
+
+        # ✅ FIX: log como texto simple
+        if guild:
+            ts = datetime.now(timezone.utc).strftime("%d/%m %H:%M")
+            await log_historial(
+                guild,
+                f"💰 `{ts}` **{interaction.user.display_name}** — Depósito generado **{fmt_monto(total)}** `{codigo}`"
+            )
 
         asyncio.create_task(refrescar_panel_depositos())
 
@@ -880,7 +866,7 @@ async def _refrescar_panel(config_key: str, canal_id: int,
             except discord.NotFound:
                 pass
         if purge_on_new:
-            await ch.purge(limit=20)
+            await ch.purge(limit=50)
         msg = await ch.send(embed=embed, view=view)
         await db.set_config(config_key, str(msg.id))
     except Exception as e:
@@ -904,7 +890,7 @@ async def refrescar_panel_stock():
 
 
 # ══════════════════════════════════════════════════════════
-#  CONFIRMACIÓN DE DEPÓSITO POR REACCIÓN ✅ — FIX
+#  CONFIRMACIÓN DE DEPÓSITO POR REACCIÓN ✅
 # ══════════════════════════════════════════════════════════
 
 @bot.event
@@ -929,7 +915,6 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     if deposito["confirmado"]:
         return
 
-    # FIX: usar msg_id, no id
     await db.confirmar_deposito(str(payload.message_id))
 
     try:
@@ -942,17 +927,14 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     except Exception:
         pass
 
-    ch_hist = guild.get_channel(CHANNEL_HISTORIAL)
-    if ch_hist:
-        log_embed = discord.Embed(
-            description=(
-                f"💰  Depósito confirmado: **{fmt_monto(deposito['monto'])}** "
-                f"de **{deposito['usuario'].split('#')[0]}**  `{deposito['codigo']}`"
-            ),
-            color=COLOR_VERDE
-        )
-        log_embed.timestamp = datetime.now(timezone.utc)
-        await ch_hist.send(embed=log_embed)
+    # ✅ FIX: log como texto simple
+    ts = datetime.now(timezone.utc).strftime("%d/%m %H:%M")
+    confirmador = guild.get_member(payload.user_id)
+    nombre_conf = confirmador.display_name if confirmador else "alguien"
+    await log_historial(
+        guild,
+        f"✅ `{ts}` Depósito confirmado por **{nombre_conf}** — **{fmt_monto(deposito['monto'])}** `{deposito['codigo']}`"
+    )
 
     asyncio.create_task(refrescar_panel_depositos())
 
@@ -977,7 +959,7 @@ async def cmd_reset(interaction: discord.Interaction):
         ch = guild.get_channel(canal_id)
         if ch:
             await db.set_config(config_key, "")
-            await ch.purge(limit=30)
+            await ch.purge(limit=50)
         await _refrescar_panel(config_key, canal_id, build_fn, view_cls, purge_on_new=True)
 
     await db.set_config("dashboard_msg_id", "")
@@ -1053,12 +1035,8 @@ async def cmd_resetdb(interaction: discord.Interaction):
             ch_hist = guild.get_channel(CHANNEL_HISTORIAL)
             if ch_hist:
                 await ch_hist.purge(limit=100)
-                log_embed = discord.Embed(
-                    description="🔄  **Reset completo** — Bot iniciado desde cero.",
-                    color=COLOR_GRIS
-                )
-                log_embed.timestamp = datetime.now(timezone.utc)
-                await ch_hist.send(embed=log_embed)
+                ts = datetime.now(timezone.utc).strftime("%d/%m %H:%M")
+                await ch_hist.send(f"🔄 `{ts}` **Reset completo** — Bot iniciado desde cero.")
 
             await inter.followup.send("✅ Todo reseteado. El bot arranca desde cero.", ephemeral=True)
             self.stop()
@@ -1101,7 +1079,7 @@ async def setup_all_panels(guild: discord.Guild):
             except discord.NotFound:
                 panel_ok = False
         if not panel_ok:
-            await ch.purge(limit=20)
+            await ch.purge(limit=50)
             await _refrescar_panel(config_key, canal_id, build_fn, view_cls, purge_on_new=False)
             print(f"✅ Panel {config_key} creado", flush=True)
 
