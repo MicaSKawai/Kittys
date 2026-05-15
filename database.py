@@ -276,6 +276,12 @@ class Database:
     async def get_depositos(self, limit: int = 15) -> list:
         return await self._rows("SELECT * FROM depositos ORDER BY fecha DESC LIMIT ?", (limit,))
 
+    # ── NUEVO: trae SOLO los pendientes sin límite artificial ──
+    async def get_depositos_pendientes(self) -> list:
+        return await self._rows(
+            "SELECT * FROM depositos WHERE confirmado=0 ORDER BY fecha ASC"
+        )
+
     # ──────────────── INGRESOS DE STOCK ────────────────
 
     async def registrar_ingreso_stock(self, producto: str, cantidad: int,
@@ -299,7 +305,8 @@ class Database:
             "gastos":    total_gastos,
             "depositos": total_depositos,
             "pendiente": total_pendiente,
-            "neto":      total_ventas - total_gastos,
+            # ✅ FIX: neto = lo que realmente entró a la org (depósitos confirmados) - gastos
+            "neto":      total_depositos - total_gastos,
         }
 
     async def get_historial_general(self, limit: int = 15) -> list:
