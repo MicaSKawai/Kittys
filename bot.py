@@ -170,7 +170,7 @@ async def build_dashboard_embed() -> discord.Embed:
     stock_lines = []
     for p in productos:
         stk   = int(p["stock"])
-        icono = "🔴" if stk == 0 else ("🟡" if stk <= 3 else "🟢")
+        icono = "🔴" if stk == 0 else ("🟡" if stk <= 10 else "🟢")
         stock_lines.append(f"{icono}  {p['emoji']}  `{p['nombre']:<12}`  **{stk}**")
 
     mid = (len(stock_lines) + 1) // 2
@@ -186,7 +186,7 @@ async def build_dashboard_embed() -> discord.Embed:
     )
 
     embed.add_field(name="", value=SEP, inline=False)
-    embed.set_footer(text="🟢 OK  🟡 Bajo (≤3)  🔴 Sin stock  •  Actualizado")
+    embed.set_footer(text="🟢 OK  🟡 Bajo (≤10)  🔴 Sin stock  •  Actualizado")
     embed.timestamp = datetime.now(timezone.utc)
     return embed
 
@@ -446,6 +446,146 @@ class ModalEditarPrecio(discord.ui.Modal, title="✏️ Editar Precio Base"):
         asyncio.create_task(refrescar_panel_stock())
 
 
+
+
+class ModalAjusteStock(discord.ui.Modal, title="🔧 Ajustar Stock"):
+    def __init__(self, producto: str, stock_actual: int):
+        super().__init__()
+        self.producto = producto
+        self.cantidad = discord.ui.TextInput(
+            label=f"Stock correcto para: {producto} (actual: {stock_actual})",
+            placeholder=f"Ej: {stock_actual}",
+            default=str(stock_actual),
+            max_length=5
+        )
+        self.motivo = discord.ui.TextInput(
+            label="Motivo del ajuste",
+            placeholder="Ej: Corrección de error, merma, etc.",
+            max_length=200,
+            required=False
+        )
+        self.add_item(self.cantidad)
+        self.add_item(self.motivo)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            nuevo_stock = int(self.cantidad.value.strip())
+            assert nuevo_stock >= 0
+        except:
+            return await interaction.response.send_message("❌ Cantidad inválida.", ephemeral=True)
+
+        await db.ajustar_stock(self.producto, nuevo_stock)
+        await interaction.response.send_message(
+            f"✅  Stock de **{self.producto.capitalize()}** ajustado a **{nuevo_stock}** unidades.",
+            ephemeral=True
+        )
+        guild = bot.get_guild(GUILD_ID)
+        if guild:
+            ts = datetime.now(timezone.utc).strftime("%d/%m %H:%M")
+            motivo_str = f" — {self.motivo.value.strip()}" if self.motivo.value.strip() else ""
+            await log_historial(
+                guild,
+                f"🔧 `{ts}` **{interaction.user.display_name}** — Ajuste stock {self.producto.capitalize()} → {nuevo_stock}{motivo_str}"
+            )
+        asyncio.create_task(refrescar_panel_stock())
+
+
+class SelectProductoBorrar(discord.ui.Select):
+    def __init__(self, productos):
+        self.prods = {p["nombre"]: p for p in productos}
+        options = [
+            discord.SelectOption(
+                label=p["nombre"].capitalize(),
+                value=p["nombre"],
+                emoji=p["emoji"] or "📦",
+                description=f"Stock: {p['stock']} | Precio base: {fmt_monto(p['precio_base'])}"
+            ) for p in productos[:25]
+        ]
+        super().__init__(placeholder="Seleccioná el producto a borrar...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        prod = self.prods[self.values[0]]
+        # Vista de confirmación
+        view = ConfirmarBorrarProducto(prod["nombre"], prod["emoji"])
+        await interaction.response.send_message(
+            f"⚠️  ¿Seguro que querés borrar **{prod['emoji']} {prod['nombre'].capitalize()}**?\n"
+            f"Esto lo desactiva — el historial de ventas se mantiene.",
+            view=view,
+            ephemeral=True
+        )
+
+
+class ConfirmarBorrarProducto(discord.ui.View):
+    def __init__(self, nombre: str, emoji: str):
+        super().__init__(timeout=30)
+        self.nombre = nombre
+        self.emoji = emoji
+
+    @discord.ui.button(label="Sí, borrar", style=discord.ButtonStyle.danger)
+    async def confirmar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await db.desactivar_producto(self.nombre)
+        await interaction.response.send_message(
+            f"✅  Producto **{self.emoji} {self.nombre.capitalize()}** eliminado.",
+            ephemeral=True
+        )
+        guild = bot.get_guild(GUILD_ID)
+        if guild:
+            ts = datetime.now(timezone.utc).strftime("%d/%m %H:%M")
+            await log_historial(
+                guild,
+                f"🗑️ `{ts}` **{interaction.user.display_name}** — Producto eliminado: {self.nombre.capitalize()}"
+            )
+        asyncio.create_task(refrescar_panel_stock())
+        self.stop()
+
+    @discord.ui.button(label="Cancelar", style=discord.ButtonStyle.secondary)
+    async def cancelar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("❌ Cancelado.", ephemeral=True)
+        self.stop()
+
+
+class SelectDepositoConfirmar(discord.ui.Select):
+    def __init__(self, depositos):
+        self.deps = {str(d["id"]): d for d in depositos}
+        options = [
+            discord.SelectOption(
+                label=f"{d['usuario'].split('#')[0]} — {fmt_monto(d['monto'])}",
+                value=str(d["id"]),
+                description=f"{d['fecha'][:16].replace('T',' ')}  {d['codigo']}"[:100]
+            ) for d in depositos[:25]
+        ]
+        super().__init__(placeholder="Seleccioná el depósito a confirmar...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        dep = self.deps[self.values[0]]
+        if dep["confirmado"]:
+            return await interaction.response.send_message("✅ Ese depósito ya fue confirmado.", ephemeral=True)
+
+        await db.confirmar_deposito_por_id(dep["id"])
+
+        # Borrar el mensaje del canal si existe
+        guild = bot.get_guild(GUILD_ID)
+        if guild and dep.get("msg_id"):
+            ch_dep = guild.get_channel(CHANNEL_DEPOSITOS)
+            if ch_dep:
+                try:
+                    msg = await ch_dep.fetch_message(int(dep["msg_id"]))
+                    await msg.delete()
+                except Exception:
+                    pass
+
+        await interaction.response.send_message(
+            f"✅  Depósito de **{dep['usuario'].split('#')[0]}** por **{fmt_monto(dep['monto'])}** confirmado.",
+            ephemeral=True
+        )
+        if guild:
+            ts = datetime.now(timezone.utc).strftime("%d/%m %H:%M")
+            await log_historial(
+                guild,
+                f"✅ `{ts}` Depósito confirmado por admin **{interaction.user.display_name}** — {dep['usuario'].split('#')[0]} **{fmt_monto(dep['monto'])}** `{dep['codigo']}`"
+            )
+        asyncio.create_task(refrescar_panel_depositos())
+
 # ══════════════════════════════════════════════════════════
 #  SELECTS
 # ══════════════════════════════════════════════════════════
@@ -501,6 +641,12 @@ class SelectProductoStock(discord.ui.Select):
                 return await interaction.response.send_message("❌ Solo admins.", ephemeral=True)
             await interaction.response.send_modal(
                 ModalEditarPrecio(prod["nombre"], int(prod["precio_base"]))
+            )
+        elif self.accion == "ajustar":
+            if not es_admin(interaction.user):
+                return await interaction.response.send_message("❌ Solo admins.", ephemeral=True)
+            await interaction.response.send_modal(
+                ModalAjusteStock(prod["nombre"], int(prod["stock"]))
             )
 
 
@@ -619,30 +765,6 @@ class PanelDepositos(discord.ui.View):
 
         asyncio.create_task(refrescar_panel_depositos())
 
-    @discord.ui.button(label="Ver Pendientes", style=discord.ButtonStyle.danger,
-                       emoji="⏳", custom_id="deposito_pendientes")
-    async def btn_pendientes(self, interaction: discord.Interaction, button: discord.ui.Button):
-        pendientes = await db.get_depositos_pendientes()
-        if not pendientes:
-            return await interaction.response.send_message(
-                "✅ No hay depósitos pendientes. Todo al día.", ephemeral=True
-            )
-        embed = discord.Embed(title="⏳  DEPÓSITOS PENDIENTES", color=COLOR_ROJO)
-        lines = []
-        for d in pendientes:
-            ts = d["fecha"][:16].replace("T", " ")
-            nombre = d["usuario"].split("#")[0]
-            lines.append(f"⏳  `{ts}`  **{nombre}**  —  {fmt_monto(d['monto'])}  `{d['codigo']}`")
-        embed.description = "\n".join(lines)
-        embed.add_field(
-            name="Cómo confirmar",
-            value="Buscá el mensaje del depósito en este canal y reaccioná con ✅",
-            inline=False
-        )
-        embed.set_footer(text="Sistema Almacén • Depósitos automáticos por venta")
-        embed.timestamp = datetime.now(timezone.utc)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
     @discord.ui.button(label="Ver Historial", style=discord.ButtonStyle.secondary,
                        emoji="📋", custom_id="deposito_historial")
     async def btn_hist_dep(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -660,6 +782,22 @@ class PanelDepositos(discord.ui.View):
         embed.set_footer(text="✅ Confirmado  ⏳ Pendiente")
         embed.timestamp = datetime.now(timezone.utc)
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="Confirmar Depósito", style=discord.ButtonStyle.primary,
+                       emoji="🔐", custom_id="deposito_confirmar_admin")
+    async def btn_confirmar_admin(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not es_admin(interaction.user):
+            return await interaction.response.send_message("❌ Solo admins.", ephemeral=True)
+        pendientes = await db.get_depositos_pendientes()
+        if not pendientes:
+            return await interaction.response.send_message(
+                "✅ No hay depósitos pendientes.", ephemeral=True
+            )
+        view = discord.ui.View(timeout=60)
+        view.add_item(SelectDepositoConfirmar(pendientes))
+        await interaction.response.send_message(
+            "Seleccioná el depósito a confirmar:", view=view, ephemeral=True
+        )
 
 
 class PanelStock(discord.ui.View):
@@ -695,6 +833,34 @@ class PanelStock(discord.ui.View):
         view.add_item(SelectProductoStock(productos, "precio"))
         await interaction.response.send_message(
             "Seleccioná el producto a editar:", view=view, ephemeral=True
+        )
+
+    @discord.ui.button(label="Ajustar Stock", style=discord.ButtonStyle.danger,
+                       emoji="🔧", custom_id="stock_ajustar")
+    async def btn_ajustar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not es_admin(interaction.user):
+            return await interaction.response.send_message("❌ Solo admins.", ephemeral=True)
+        productos = await db.get_productos()
+        if not productos:
+            return await interaction.response.send_message("❌ Sin productos.", ephemeral=True)
+        view = discord.ui.View(timeout=60)
+        view.add_item(SelectProductoStock(productos, "ajustar"))
+        await interaction.response.send_message(
+            "Seleccioná el producto a ajustar:", view=view, ephemeral=True
+        )
+
+    @discord.ui.button(label="Borrar Producto", style=discord.ButtonStyle.danger,
+                       emoji="🗑️", custom_id="stock_borrar_producto")
+    async def btn_borrar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not es_admin(interaction.user):
+            return await interaction.response.send_message("❌ Solo admins.", ephemeral=True)
+        productos = await db.get_productos()
+        if not productos:
+            return await interaction.response.send_message("❌ Sin productos.", ephemeral=True)
+        view = discord.ui.View(timeout=60)
+        view.add_item(SelectProductoBorrar(productos))
+        await interaction.response.send_message(
+            "Seleccioná el producto a borrar:", view=view, ephemeral=True
         )
 
 
@@ -825,13 +991,13 @@ async def build_embed_stock() -> discord.Embed:
             stk = int(p["stock"])
             if stk == 0:
                 ind = "🔴"
-            elif stk <= 3:
+            elif stk <= 10:
                 ind = "🟡"
             else:
                 ind = "🟢"
             lines.append(f"{ind}  {p['emoji']}  **{p['nombre'].capitalize()}**  —  `{stk}` unidades  ·  base: {fmt_monto(p['precio_base'])}")
         embed.add_field(name="📋  Inventario", value="\n".join(lines), inline=False)
-    embed.set_footer(text="🟢 OK  🟡 Bajo (≤3)  🔴 Sin stock  •  Sistema Almacén")
+    embed.set_footer(text="🟢 OK  🟡 Bajo (≤10)  🔴 Sin stock  •  Sistema Almacén")
     embed.timestamp = datetime.now(timezone.utc)
     return embed
 
