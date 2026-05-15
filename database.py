@@ -176,6 +176,12 @@ class Database:
         await self._q("UPDATE productos SET stock = stock - ? WHERE nombre=?", (cantidad, nombre))
         return True
 
+    async def ajustar_stock(self, nombre: str, nuevo_stock: int):
+        await self._q("UPDATE productos SET stock=? WHERE nombre=?", (nuevo_stock, nombre))
+
+    async def desactivar_producto(self, nombre: str):
+        await self._q("UPDATE productos SET activo=0 WHERE nombre=?", (nombre,))
+
     # ──────────────── VENTAS ────────────────
 
     async def registrar_venta(self, producto: str, cantidad: int, precio_unit: int,
@@ -265,6 +271,9 @@ class Database:
 
     async def confirmar_deposito(self, msg_id: str):
         await self._q("UPDATE depositos SET confirmado=1 WHERE msg_id=?", (msg_id,))
+
+    async def confirmar_deposito_por_id(self, dep_id: int):
+        await self._q("UPDATE depositos SET confirmado=1 WHERE id=?", (dep_id,))
 
     async def get_deposito_por_msg(self, msg_id: str):
         return await self._row("SELECT * FROM depositos WHERE msg_id=?", (msg_id,))
