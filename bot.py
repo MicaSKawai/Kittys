@@ -47,7 +47,7 @@ def fmt_monto(n: int) -> str:
 
 
 def gen_codigo() -> str:
-    return "#" + "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    return "#PUR26D"
 
 
 def ahora() -> str:
@@ -270,14 +270,12 @@ class ModalVenta(discord.ui.Modal, title="💰 Registrar Venta"):
             interaction.user.id, str(interaction.user)
         )
 
-        # Confirmación solo ephemeral al vendedor
         await interaction.response.send_message(
             f"✅  Venta registrada: **{cant}x {self.producto.capitalize()}** — **{fmt_monto(total)}**\n"
             f"Cuando quieras cerrar el día usá el botón **Cerrar Día / Generar Depósito** en <#{CHANNEL_DEPOSITOS}>.",
             ephemeral=True
         )
 
-        # ✅ FIX: log como texto simple, una sola línea, sin embed
         guild = bot.get_guild(GUILD_ID)
         if guild:
             ts = datetime.now(timezone.utc).strftime("%d/%m %H:%M")
@@ -318,7 +316,6 @@ class ModalGasto(discord.ui.Modal, title="💸 Registrar Gasto"):
             ephemeral=True
         )
 
-        # ✅ FIX: log como texto simple
         guild = bot.get_guild(GUILD_ID)
         if guild:
             ts = datetime.now(timezone.utc).strftime("%d/%m %H:%M")
@@ -365,7 +362,6 @@ class ModalIngresoStock(discord.ui.Modal, title="📦 Ingresar Stock"):
             ephemeral=True
         )
 
-        # ✅ FIX: log como texto simple
         guild = bot.get_guild(GUILD_ID)
         if guild:
             ts = datetime.now(timezone.utc).strftime("%d/%m %H:%M")
@@ -614,7 +610,6 @@ class PanelDepositos(discord.ui.View):
             ephemeral=True
         )
 
-        # ✅ FIX: log como texto simple
         if guild:
             ts = datetime.now(timezone.utc).strftime("%d/%m %H:%M")
             await log_historial(
@@ -927,7 +922,6 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     except Exception:
         pass
 
-    # ✅ FIX: log como texto simple
     ts = datetime.now(timezone.utc).strftime("%d/%m %H:%M")
     confirmador = guild.get_member(payload.user_id)
     nombre_conf = confirmador.display_name if confirmador else "alguien"
