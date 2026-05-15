@@ -47,7 +47,7 @@ def fmt_monto(n: int) -> str:
 
 
 def gen_codigo() -> str:
-    return "#PUR26D"
+    return "#Z49NVE"
 
 
 def ahora() -> str:
@@ -108,10 +108,10 @@ async def build_dashboard_embed() -> discord.Embed:
         name="💰  BALANCE GENERAL",
         value=(
             f"```\n"
-            f"  Ventas totales    {fmt_monto(balance['ventas']):>15}\n"
-            f"  Gastos totales  - {fmt_monto(balance['gastos']):>15}\n"
+            f"  Depósitos confirmados  {fmt_monto(balance['depositos']):>15}\n"
+            f"  Gastos totales       - {fmt_monto(balance['gastos']):>15}\n"
             f"  {'─'*34}\n"
-            f"  Ganancia neta     {fmt_monto(neto):>15}\n"
+            f"  Balance en org         {fmt_monto(balance['neto']):>15}\n"
             f"```"
         ),
         inline=False
@@ -622,8 +622,7 @@ class PanelDepositos(discord.ui.View):
     @discord.ui.button(label="Ver Pendientes", style=discord.ButtonStyle.danger,
                        emoji="⏳", custom_id="deposito_pendientes")
     async def btn_pendientes(self, interaction: discord.Interaction, button: discord.ui.Button):
-        depositos = await db.get_depositos(15)
-        pendientes = [d for d in depositos if not d["confirmado"]]
+        pendientes = await db.get_depositos_pendientes()
         if not pendientes:
             return await interaction.response.send_message(
                 "✅ No hay depósitos pendientes. Todo al día.", ephemeral=True
@@ -765,8 +764,8 @@ async def build_embed_gastos() -> discord.Embed:
 
 async def build_embed_depositos() -> discord.Embed:
     total_dep = await db.get_total_depositos()
-    depositos = await db.get_depositos(15)
-    pendientes = [d for d in depositos if not d["confirmado"]]
+    pendientes = await db.get_depositos_pendientes()
+    depositos_recientes = await db.get_depositos(10)
     total_pendiente = sum(d["monto"] for d in pendientes)
 
     embed = discord.Embed(
@@ -912,13 +911,18 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
 
     await db.confirmar_deposito(str(payload.message_id))
 
+    confirmador = guild.get_member(payload.user_id)
+    nombre_conf = confirmador.display_name if confirmador else "alguien"
     try:
         msg = await channel.fetch_message(payload.message_id)
-        embed = msg.embeds[0] if msg.embeds else discord.Embed()
-        embed.color = COLOR_VERDE
-        confirmador = guild.get_member(payload.user_id)
-        embed.set_footer(text=f"✅ Confirmado por {confirmador.display_name if confirmador else 'alguien'}")
-        await msg.edit(embed=embed)
+        await msg.delete()
+    except Exception:
+        pass
+    try:
+        await channel.send(
+            f"✅  Depósito de **{fmt_monto(deposito['monto'])}** confirmado por **{nombre_conf}** `{deposito['codigo']}`",
+            delete_after=15
+        )
     except Exception:
         pass
 
