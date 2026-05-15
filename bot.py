@@ -913,28 +913,23 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
 
     confirmador = guild.get_member(payload.user_id)
     nombre_conf = confirmador.display_name if confirmador else "alguien"
+
+    # Borrar el mensaje de depósito del canal sin dejar rastro
     try:
         msg = await channel.fetch_message(payload.message_id)
         await msg.delete()
     except Exception:
         pass
-    try:
-        await channel.send(
-            f"✅  Depósito de **{fmt_monto(deposito['monto'])}** confirmado por **{nombre_conf}** `{deposito['codigo']}`",
-            delete_after=15
-        )
-    except Exception:
-        pass
 
+    # Solo log en historial, sin mensajes extra en el canal
     ts = datetime.now(timezone.utc).strftime("%d/%m %H:%M")
-    confirmador = guild.get_member(payload.user_id)
-    nombre_conf = confirmador.display_name if confirmador else "alguien"
     await log_historial(
         guild,
         f"✅ `{ts}` Depósito confirmado por **{nombre_conf}** — **{fmt_monto(deposito['monto'])}** `{deposito['codigo']}`"
     )
 
-    asyncio.create_task(refrescar_panel_depositos())
+    # Refrescar panel de forma inmediata
+    await refrescar_panel_depositos()
 
 
 # ══════════════════════════════════════════════════════════
