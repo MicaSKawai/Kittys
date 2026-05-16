@@ -128,8 +128,6 @@ async def build_dashboard_embed() -> discord.Embed:
         title="\U0001f3ea  ALM\u00c1C\u00c9N  —  PANEL DE CONTROL",
         color=COLOR_MORADO
     )
-    embed.set_thumbnail(url="https://i.imgur.com/5Wo4zHG.gif")
-
     # ── CAJA ──
     embed.add_field(
         name="\U0001f4b5  CAJA ACTUAL",
@@ -199,11 +197,13 @@ async def refrescar_dashboard():
                 return
             except discord.NotFound:
                 pass
+        # Limpiar canal y mandar gif + embed como mensajes separados
         await ch.purge(limit=20)
+        await ch.send("https://i.imgur.com/5Wo4zHG.gif")
         msg = await ch.send(embed=embed)
         await db.set_config("dashboard_msg_id", str(msg.id))
     except Exception as e:
-        print(f"⚠️ Error dashboard: {e}", flush=True)
+        print(f"\u26a0\ufe0f Error dashboard: {e}", flush=True)
 
 
 @tasks.loop(seconds=10)
