@@ -126,18 +126,13 @@ async def build_dashboard_embed() -> discord.Embed:
 
     embed = discord.Embed(
         title="\U0001f3ea  ALM\u00c1C\u00c9N  \u2014  PANEL DE CONTROL",
+        description=f"\U0001f4b5  **CAJA ACTUAL**\n# {fmt_monto(neto)}",
         color=COLOR_MORADO
     )
 
     # Gif como imagen principal del embed (abajo, pero integrado)
     embed.set_image(url="https://i.imgur.com/5Wo4zHG.gif")
 
-    # ── CAJA ────────────────────────────────────────
-    embed.add_field(
-        name="\U0001f4b5  CAJA ACTUAL",
-        value=fmt_monto(neto),
-        inline=False
-    )
 
     # ── DEPÓSITOS ───────────────────────────────────
     if ventas_sin_dep:
