@@ -118,100 +118,70 @@ async def build_dashboard_embed() -> discord.Embed:
     ventas_por_user = await db.get_ventas_por_usuario()
     ventas_por_prod = await db.get_ventas_por_producto()
 
-    # Ventas aún no cerradas con "Cerrar Día" por socio
     ventas_sin_dep = await db._rows(
         "SELECT usuario, SUM(total) as subtotal FROM ventas WHERE depositado=0 GROUP BY usuario_id"
     )
     total_sin_dep = sum(int(v["subtotal"]) for v in ventas_sin_dep)
-
     neto = balance["neto"]
 
     embed = discord.Embed(
-        title="🏪  ALMACÉN — PANEL DE CONTROL",
+        title="\U0001f3ea  ALM\u00c1C\u00c9N  —  PANEL DE CONTROL",
         color=COLOR_MORADO
     )
-    embed.set_image(url="https://i.imgur.com/5Wo4zHG.gif")
+    embed.set_thumbnail(url="https://i.imgur.com/5Wo4zHG.gif")
 
-    # ── CAJA ACTUAL ──────────────────────────────────────────
+    # ── CAJA ──
     embed.add_field(
-        name="💵  CAJA ACTUAL",
-        value=f"# {fmt_monto(neto)}",
+        name="\U0001f4b5  CAJA ACTUAL",
+        value=f"### {fmt_monto(neto)}",
         inline=False
     )
 
-    embed.add_field(name="", value=SEP, inline=False)
-
-    # ── VENTAS SIN CERRAR ────────────────────────────────────
+    # ── DEPÓSITOS ──
     if ventas_sin_dep:
-        sin_dep_lines = "\n".join(
-            f"⏳  **{v['usuario'].split('#')[0]}** — {fmt_monto(int(v['subtotal']))}"
+        sin_dep_lines = "  \u00b7  ".join(
+            f"**{v['usuario'].split('#')[0]}** {fmt_monto(int(v['subtotal']))}"
             for v in ventas_sin_dep
         )
-        embed.add_field(
-            name=f"⚠️  SIN DEPOSITAR  —  {fmt_monto(total_sin_dep)}",
-            value=sin_dep_lines,
-            inline=True
-        )
+        dep_value = f"\u26a0\ufe0f  **{fmt_monto(total_sin_dep)}** sin cerrar\n{sin_dep_lines}"
     else:
-        embed.add_field(
-            name="✅  DEPÓSITOS",
-            value="Todo cerrado y depositado",
-            inline=True
-        )
+        dep_value = "\u2705  Todo cerrado y depositado"
 
-    # ── VENTAS POR SOCIO ─────────────────────────────────────
-    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+    embed.add_field(name="\U0001f3e6  DEP\u00d3SITOS", value=dep_value, inline=True)
+
+    # ── VENTAS POR SOCIO ──
+    medals = ["\U0001f947", "\U0001f948", "\U0001f949", "4\ufe0f\u20e3", "5\ufe0f\u20e3"]
     if ventas_por_user:
         v_lines = []
         for i, v in enumerate(ventas_por_user[:5]):
-            med    = medals[i] if i < len(medals) else "▸"
+            med    = medals[i] if i < len(medals) else "\u25b8"
             nombre = v["usuario"].split("#")[0] if v["usuario"] else "?"
-            v_lines.append(f"{med}  **{nombre}** — {fmt_monto(v['total'])}  `{v['cant']} ventas`")
-        embed.add_field(
-            name="👥  VENTAS POR SOCIO",
-            value="\n".join(v_lines),
-            inline=True
-        )
+            v_lines.append(f"{med} **{nombre}** \u2014 {fmt_monto(v['total'])} `{v['cant']}v`")
+        embed.add_field(name="\U0001f465  VENTAS POR SOCIO", value="\n".join(v_lines), inline=True)
 
     embed.add_field(name="", value=SEP, inline=False)
 
-    # ── TOP PRODUCTOS ────────────────────────────────────────
+    # ── TOP PRODUCTOS ──
     if ventas_por_prod:
         p_lines = []
-        for v in ventas_por_prod[:6]:
-            prod = v["producto"].capitalize()
-            p_lines.append(f"▸  **{prod}** — {v['unidades']} und · {fmt_monto(v['total'])}")
-        embed.add_field(
-            name="📊  TOP PRODUCTOS",
-            value="\n".join(p_lines),
-            inline=True
-        )
+        for v in ventas_por_prod[:5]:
+            p_lines.append(f"\u25b8 **{v['producto'].capitalize()}** \u2014 {v['unidades']} und \u00b7 {fmt_monto(v['total'])}")
+        embed.add_field(name="\U0001f4ca  TOP PRODUCTOS", value="\n".join(p_lines), inline=True)
 
-    # ── STOCK ────────────────────────────────────────────────
-    stock_lines = []
-    for p in productos:
-        stk   = int(p["stock"])
-        icono = "🔴" if stk == 0 else ("🟡" if stk <= 10 else "🟢")
-        stock_lines.append(f"{icono}  {p['emoji']}  `{p['nombre']:<12}`  **{stk}**")
+    # ── STOCK ──
+    if productos:
+        col_a, col_b = [], []
+        for i, p in enumerate(productos):
+            stk   = int(p["stock"])
+            icono = "\U0001f534" if stk == 0 else ("\U0001f7e1" if stk <= 10 else "\U0001f7e2")
+            linea = f"{icono} {p['emoji']} **{p['nombre'].capitalize()}** `{stk}`"
+            (col_a if i % 2 == 0 else col_b).append(linea)
+        embed.add_field(name="\U0001f4e6  STOCK", value="\n".join(col_a), inline=True)
+        embed.add_field(name="\u200b", value="\n".join(col_b) if col_b else "\u200b", inline=True)
 
-    mid = (len(stock_lines) + 1) // 2
-    embed.add_field(
-        name="📦  STOCK",
-        value="\n".join(stock_lines[:mid]) or "Sin productos",
-        inline=True
-    )
-    if stock_lines[mid:]:
-        embed.add_field(
-            name="​",
-            value="\n".join(stock_lines[mid:]),
-            inline=True
-        )
-
-    embed.set_footer(text="🟢 OK  🟡 Bajo (≤10)  🔴 Sin stock")
+    embed.set_footer(text="\U0001f7e2 OK  \U0001f7e1 Bajo (\u226410)  \U0001f534 Sin stock")
     embed.timestamp = datetime.now(timezone.utc)
     return embed
-
-
 async def refrescar_dashboard():
     guild = bot.get_guild(GUILD_ID)
     if not guild:
