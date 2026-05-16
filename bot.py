@@ -9,6 +9,7 @@ import discord
 from discord.ext import commands, tasks
 import os
 import asyncio
+import aiohttp
 import random
 import string
 from datetime import datetime, timezone
@@ -29,6 +30,9 @@ CHANNEL_STOCK      = int(os.getenv("CHANNEL_STOCK",      "0"))
 CHANNEL_GASTOS     = int(os.getenv("CHANNEL_GASTOS",     "0"))
 CHANNEL_DEPOSITOS  = int(os.getenv("CHANNEL_DEPOSITOS",  "0"))
 CHANNEL_HISTORIAL  = int(os.getenv("CHANNEL_HISTORIAL",  "0"))
+
+# URL pública de Render para el auto-ping (se obtiene automáticamente)
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "")
 
 ADMIN_ROLES = ["Admin", "admin", "Dueño", "dueño"]
 
@@ -62,7 +66,6 @@ def es_admin(member: discord.Member) -> bool:
 #  HELPER — log al historial como texto simple (sin embed)
 # ══════════════════════════════════════════════════════════
 async def log_historial(guild: discord.Guild, texto: str):
-    """Manda una línea simple al canal historial. No usa embed para no llenar el canal."""
     ch = guild.get_channel(CHANNEL_HISTORIAL)
     if ch:
         try:
@@ -86,6 +89,27 @@ _db_ready = False
 
 
 # ══════════════════════════════════════════════════════════
+#  AUTO-PING — evita que Render duerma el servicio
+# ══════════════════════════════════════════════════════════
+@tasks.loop(minutes=4)
+async def loop_self_ping():
+    """Se pingea a sí mismo cada 4 minutos para no dormir en Render free."""
+    if not RENDER_URL:
+        return
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{RENDER_URL}/ping", timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    print(f"🏓 Self-ping OK ({datetime.now(timezone.utc).strftime('%H:%M')})", flush=True)
+    except Exception as e:
+        print(f"⚠️ Self-ping falló: {e}", flush=True)
+
+@loop_self_ping.before_loop
+async def before_self_ping():
+    await bot.wait_until_ready()
+
+
+# ══════════════════════════════════════════════════════════
 #  DASHBOARD
 # ══════════════════════════════════════════════════════════
 async def build_dashboard_embed() -> discord.Embed:
@@ -95,8 +119,13 @@ async def build_dashboard_embed() -> discord.Embed:
     gastos_por_user  = await db.get_gastos_por_usuario()
     ventas_por_prod  = await db.get_ventas_por_producto()
 
-    neto      = balance["neto"]
-    pendiente = balance["pendiente"]
+    # Ventas que todavía no fueron cerradas con "Cerrar Día" (depositado=0)
+    ventas_sin_dep   = await db._rows(
+        "SELECT usuario, SUM(total) as subtotal FROM ventas WHERE depositado=0 GROUP BY usuario_id"
+    )
+    total_sin_dep = sum(int(v["subtotal"]) for v in ventas_sin_dep)
+
+    neto = balance["neto"]
 
     embed = discord.Embed(
         title="🏪  ALMACÉN — PANEL DE CONTROL",
@@ -117,14 +146,26 @@ async def build_dashboard_embed() -> discord.Embed:
         inline=False
     )
 
-    icono_pend = "⚠️" if pendiente > 0 else "✅"
+    # Líneas por socio con ventas sin cerrar
+    if ventas_sin_dep:
+        sin_dep_lines = "\n".join(
+            f"⏳  **{v['usuario'].split('#')[0]}** — {fmt_monto(int(v['subtotal']))}"
+            for v in ventas_sin_dep
+        )
+        sin_dep_value = (
+            f"✅  Confirmado:  **{fmt_monto(balance['depositos'])}**\n"
+            f"⚠️  Sin cerrar:  **{fmt_monto(total_sin_dep)}**  ← ¡Faltan cerrar el día!\n"
+            f"{sin_dep_lines}"
+        )
+    else:
+        sin_dep_value = (
+            f"✅  Confirmado:  **{fmt_monto(balance['depositos'])}**\n"
+            f"✅  Todo cerrado y depositado"
+        )
+
     embed.add_field(
         name="🏦  DEPÓSITOS A LA ORG",
-        value=(
-            f"✅  Confirmado:  **{fmt_monto(balance['depositos'])}**\n"
-            f"{icono_pend}  Pendiente:    **{fmt_monto(pendiente)}**"
-            + ("  ← ¡A depositar!" if pendiente > 0 else "")
-        ),
+        value=sin_dep_value,
         inline=True
     )
 
@@ -219,6 +260,10 @@ async def refrescar_dashboard():
 async def loop_dashboard():
     if _db_ready:
         await refrescar_dashboard()
+
+@loop_dashboard.before_loop
+async def before_dashboard():
+    await bot.wait_until_ready()
 
 
 # ══════════════════════════════════════════════════════════
@@ -446,8 +491,6 @@ class ModalEditarPrecio(discord.ui.Modal, title="✏️ Editar Precio Base"):
         asyncio.create_task(refrescar_panel_stock())
 
 
-
-
 class ModalAjusteStock(discord.ui.Modal, title="🔧 Ajustar Stock"):
     def __init__(self, producto: str, stock_actual: int):
         super().__init__()
@@ -505,7 +548,6 @@ class SelectProductoBorrar(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         prod = self.prods[self.values[0]]
-        # Vista de confirmación
         view = ConfirmarBorrarProducto(prod["nombre"], prod["emoji"])
         await interaction.response.send_message(
             f"⚠️  ¿Seguro que querés borrar **{prod['emoji']} {prod['nombre'].capitalize()}**?\n"
@@ -563,7 +605,6 @@ class SelectDepositoConfirmar(discord.ui.Select):
 
         await db.confirmar_deposito_por_id(dep["id"])
 
-        # Borrar el mensaje del canal si existe
         guild = bot.get_guild(GUILD_ID)
         if guild and dep.get("msg_id"):
             ch_dep = guild.get_channel(CHANNEL_DEPOSITOS)
@@ -585,6 +626,7 @@ class SelectDepositoConfirmar(discord.ui.Select):
                 f"✅ `{ts}` Depósito confirmado por admin **{interaction.user.display_name}** — {dep['usuario'].split('#')[0]} **{fmt_monto(dep['monto'])}** `{dep['codigo']}`"
             )
         asyncio.create_task(refrescar_panel_depositos())
+
 
 # ══════════════════════════════════════════════════════════
 #  SELECTS
@@ -1080,21 +1122,18 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     confirmador = guild.get_member(payload.user_id)
     nombre_conf = confirmador.display_name if confirmador else "alguien"
 
-    # Borrar el mensaje de depósito del canal sin dejar rastro
     try:
         msg = await channel.fetch_message(payload.message_id)
         await msg.delete()
     except Exception:
         pass
 
-    # Solo log en historial, sin mensajes extra en el canal
     ts = datetime.now(timezone.utc).strftime("%d/%m %H:%M")
     await log_historial(
         guild,
         f"✅ `{ts}` Depósito confirmado por **{nombre_conf}** — **{fmt_monto(deposito['monto'])}** `{deposito['codigo']}`"
     )
 
-    # Refrescar panel de forma inmediata
     await refrescar_panel_depositos()
 
 
@@ -1274,6 +1313,10 @@ async def startup():
         loop_dashboard.start()
         print("✅ Dashboard loop iniciado", flush=True)
 
+    if not loop_self_ping.is_running():
+        loop_self_ping.start()
+        print(f"✅ Self-ping loop iniciado {'(URL: ' + RENDER_URL + ')' if RENDER_URL else '(sin RENDER_EXTERNAL_URL)'}", flush=True)
+
 
 @bot.event
 async def on_ready():
@@ -1285,4 +1328,16 @@ async def on_ready():
     asyncio.create_task(startup())
 
 
-bot.run(TOKEN)
+# ══════════════════════════════════════════════════════════
+#  RECONEXIÓN AUTOMÁTICA
+# ══════════════════════════════════════════════════════════
+@bot.event
+async def on_disconnect():
+    print("⚠️ Bot desconectado — esperando reconexión automática de discord.py...", flush=True)
+
+@bot.event
+async def on_resumed():
+    print("✅ Sesión resumida correctamente.", flush=True)
+
+
+bot.run(TOKEN, reconnect=True)
