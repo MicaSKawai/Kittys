@@ -51,7 +51,7 @@ def fmt_monto(n: int) -> str:
 
 
 def gen_codigo() -> str:
-    return "#Z49NVE"
+    return "#PUR26D"
 
 
 def ahora() -> str:
@@ -130,7 +130,7 @@ async def build_dashboard_embed() -> discord.Embed:
         title="🏪  ALMACÉN — PANEL DE CONTROL",
         color=COLOR_MORADO
     )
-    embed.set_image(url="https://i.imgur.com/39Kf89D.gif")
+    embed.set_image(url="https://i.imgur.com/5Wo4zHG.gif")
 
     # ── CAJA ACTUAL ──────────────────────────────────────────
     embed.add_field(
