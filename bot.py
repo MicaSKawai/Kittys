@@ -113,14 +113,13 @@ async def before_self_ping():
 #  DASHBOARD
 # ══════════════════════════════════════════════════════════
 async def build_dashboard_embed() -> discord.Embed:
-    balance          = await db.get_balance()
-    productos        = await db.get_productos()
-    ventas_por_user  = await db.get_ventas_por_usuario()
-    gastos_por_user  = await db.get_gastos_por_usuario()
-    ventas_por_prod  = await db.get_ventas_por_producto()
+    balance         = await db.get_balance()
+    productos       = await db.get_productos()
+    ventas_por_user = await db.get_ventas_por_usuario()
+    ventas_por_prod = await db.get_ventas_por_producto()
 
-    # Ventas que todavía no fueron cerradas con "Cerrar Día" (depositado=0)
-    ventas_sin_dep   = await db._rows(
+    # Ventas aún no cerradas con "Cerrar Día" por socio
+    ventas_sin_dep = await db._rows(
         "SELECT usuario, SUM(total) as subtotal FROM ventas WHERE depositado=0 GROUP BY usuario_id"
     )
     total_sin_dep = sum(int(v["subtotal"]) for v in ventas_sin_dep)
@@ -129,59 +128,37 @@ async def build_dashboard_embed() -> discord.Embed:
 
     embed = discord.Embed(
         title="🏪  ALMACÉN — PANEL DE CONTROL",
-        description=f"{SEP}\n📡  *Dashboard en tiempo real — se actualiza cada 10s*\n{SEP}",
         color=COLOR_MORADO
     )
 
+    # ── CAJA ACTUAL ──────────────────────────────────────────
     embed.add_field(
-        name="💰  BALANCE GENERAL",
-        value=(
-            f"```\n"
-            f"  Depósitos confirmados  {fmt_monto(balance['depositos']):>15}\n"
-            f"  Gastos totales       - {fmt_monto(balance['gastos']):>15}\n"
-            f"  {'─'*34}\n"
-            f"  Balance en org         {fmt_monto(balance['neto']):>15}\n"
-            f"```"
-        ),
+        name="💵  CAJA ACTUAL",
+        value=f"# {fmt_monto(neto)}",
         inline=False
     )
 
-    # Líneas por socio con ventas sin cerrar
+    embed.add_field(name="", value=SEP, inline=False)
+
+    # ── VENTAS SIN CERRAR ────────────────────────────────────
     if ventas_sin_dep:
         sin_dep_lines = "\n".join(
             f"⏳  **{v['usuario'].split('#')[0]}** — {fmt_monto(int(v['subtotal']))}"
             for v in ventas_sin_dep
         )
-        sin_dep_value = (
-            f"✅  Confirmado:  **{fmt_monto(balance['depositos'])}**\n"
-            f"⚠️  Sin cerrar:  **{fmt_monto(total_sin_dep)}**  ← ¡Faltan cerrar el día!\n"
-            f"{sin_dep_lines}"
+        embed.add_field(
+            name=f"⚠️  SIN DEPOSITAR  —  {fmt_monto(total_sin_dep)}",
+            value=sin_dep_lines,
+            inline=True
         )
     else:
-        sin_dep_value = (
-            f"✅  Confirmado:  **{fmt_monto(balance['depositos'])}**\n"
-            f"✅  Todo cerrado y depositado"
-        )
-
-    embed.add_field(
-        name="🏦  DEPÓSITOS A LA ORG",
-        value=sin_dep_value,
-        inline=True
-    )
-
-    if gastos_por_user:
-        g_lines = []
-        for g in gastos_por_user[:4]:
-            nombre = g["usuario"].split("#")[0] if g["usuario"] else "?"
-            g_lines.append(f"▸  **{nombre}** — {fmt_monto(g['total'])}  `({g['cant']})`")
         embed.add_field(
-            name="💸  GASTOS POR SOCIO",
-            value="\n".join(g_lines) or "Sin gastos",
+            name="✅  DEPÓSITOS",
+            value="Todo cerrado y depositado",
             inline=True
         )
 
-    embed.add_field(name="", value=SEP, inline=False)
-
+    # ── VENTAS POR SOCIO ─────────────────────────────────────
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
     if ventas_por_user:
         v_lines = []
@@ -191,10 +168,13 @@ async def build_dashboard_embed() -> discord.Embed:
             v_lines.append(f"{med}  **{nombre}** — {fmt_monto(v['total'])}  `{v['cant']} ventas`")
         embed.add_field(
             name="👥  VENTAS POR SOCIO",
-            value="\n".join(v_lines) or "Sin ventas",
+            value="\n".join(v_lines),
             inline=True
         )
 
+    embed.add_field(name="", value=SEP, inline=False)
+
+    # ── TOP PRODUCTOS ────────────────────────────────────────
     if ventas_por_prod:
         p_lines = []
         for v in ventas_por_prod[:6]:
@@ -202,12 +182,11 @@ async def build_dashboard_embed() -> discord.Embed:
             p_lines.append(f"▸  **{prod}** — {v['unidades']} und · {fmt_monto(v['total'])}")
         embed.add_field(
             name="📊  TOP PRODUCTOS",
-            value="\n".join(p_lines) or "Sin ventas aún",
+            value="\n".join(p_lines),
             inline=True
         )
 
-    embed.add_field(name="", value=SEP, inline=False)
-
+    # ── STOCK ────────────────────────────────────────────────
     stock_lines = []
     for p in productos:
         stk   = int(p["stock"])
@@ -216,18 +195,18 @@ async def build_dashboard_embed() -> discord.Embed:
 
     mid = (len(stock_lines) + 1) // 2
     embed.add_field(
-        name="📦  STOCK ACTUAL",
+        name="📦  STOCK",
         value="\n".join(stock_lines[:mid]) or "Sin productos",
         inline=True
     )
-    embed.add_field(
-        name="​",
-        value="\n".join(stock_lines[mid:]) or "​",
-        inline=True
-    )
+    if stock_lines[mid:]:
+        embed.add_field(
+            name="​",
+            value="\n".join(stock_lines[mid:]),
+            inline=True
+        )
 
-    embed.add_field(name="", value=SEP, inline=False)
-    embed.set_footer(text="🟢 OK  🟡 Bajo (≤10)  🔴 Sin stock  •  Actualizado")
+    embed.set_footer(text="🟢 OK  🟡 Bajo (≤10)  🔴 Sin stock")
     embed.timestamp = datetime.now(timezone.utc)
     return embed
 
@@ -972,9 +951,13 @@ async def build_embed_gastos() -> discord.Embed:
 
 async def build_embed_depositos() -> discord.Embed:
     total_dep = await db.get_total_depositos()
-    pendientes = await db.get_depositos_pendientes()
-    depositos_recientes = await db.get_depositos(10)
-    total_pendiente = sum(d["monto"] for d in pendientes)
+
+    # Ventas aún no cerradas por cada socio (depositado=0)
+    ventas_sin_dep = await db._rows(
+        "SELECT usuario, usuario_id, SUM(total) as subtotal, COUNT(*) as cant "
+        "FROM ventas WHERE depositado=0 GROUP BY usuario_id"
+    )
+    total_sin_dep = sum(int(v["subtotal"]) for v in ventas_sin_dep)
 
     embed = discord.Embed(
         title="💰  PANEL DE DEPÓSITOS",
@@ -991,25 +974,30 @@ async def build_embed_depositos() -> discord.Embed:
         ),
         color=COLOR_ORO
     )
+
     embed.add_field(
-        name="✅  Total depositado",
+        name="✅  Total en org",
         value=f"**{fmt_monto(total_dep)}**",
         inline=True
     )
-    embed.add_field(
-        name="⏳  Pendiente de depósito",
-        value=f"**{fmt_monto(total_pendiente)}**" + ("  ⚠️" if total_pendiente > 0 else "  ✔️"),
-        inline=True
-    )
-    if pendientes:
-        embed.add_field(
-            name=f"⏳  {len(pendientes)} depósito(s) pendiente(s)",
-            value="\n".join(
-                f"▸ {d['usuario'].split('#')[0]}  —  {fmt_monto(d['monto'])}  `{d['codigo']}`"
-                for d in pendientes[:5]
-            ),
-            inline=False
+
+    if ventas_sin_dep:
+        pend_lines = "\n".join(
+            f"⏳  **{v['usuario'].split('#')[0]}**  —  {fmt_monto(int(v['subtotal']))}  `({v['cant']} ventas)`"
+            for v in ventas_sin_dep
         )
+        embed.add_field(
+            name=f"⚠️  Sin depositar  —  {fmt_monto(total_sin_dep)}",
+            value=pend_lines,
+            inline=True
+        )
+    else:
+        embed.add_field(
+            name="✅  Sin depositar",
+            value="Todo cerrado",
+            inline=True
+        )
+
     embed.set_footer(text="Sistema Almacén  •  Depósitos de cierre de día")
     embed.timestamp = datetime.now(timezone.utc)
     return embed
