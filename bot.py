@@ -51,7 +51,7 @@ def fmt_monto(n: int) -> str:
 
 
 def gen_codigo() -> str:
-    return "#PUR26D"
+    return "#Z49NVE"
 
 
 def ahora() -> str:
